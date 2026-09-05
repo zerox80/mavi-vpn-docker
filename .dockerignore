@@ -1,0 +1,11 @@
+# Applied to the source checkout by the publishing workflow.
+**/.git
+**/.env
+**/.env.*
+**/target
+**/node_modules
+**/data
+**/.gradle
+**/*.apk
+**/*.aab
+**/*.log
