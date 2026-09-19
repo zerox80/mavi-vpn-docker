@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+!.env.ipv6.example
 data/
 source/
 *.tar
