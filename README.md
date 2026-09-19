@@ -46,6 +46,8 @@ echo 'net.ipv4.ip_forward = 1' | sudo tee /etc/sysctl.d/99-mavi-vpn-ipv4.conf
 sudo sysctl -p /etc/sysctl.d/99-mavi-vpn-ipv4.conf
 ```
 
+For IPv6 internet access through the VPN, also complete [Enabling IPv6](#enabling-ipv6).
+
 Then start the server:
 
 ```bash
@@ -137,23 +139,203 @@ when planning capacity.
 ## Enabling IPv6
 
 `VPN_DISABLE_IPV6=true` is the default to simplify initial setup.
-If the host has public IPv6 connectivity, configure forwarding first. When
-using router advertisements (RAs), the WAN interface must continue accepting them.
-Identify the interface and save the settings in this order:
+Enabling IPv6 gives VPN clients internal addresses from `fd00::/64`; the server
+uses NAT66 to send their traffic through the VPS's public IPv6 address.
+Keep `VPN_NETWORK_V6` as an internal ULA subnet, not the VPS's public address
+or provider-assigned prefix.
+
+IPv6 **inside the tunnel** also works when clients connect to the server over
+IPv4 (`VPN_BIND_ADDR=0.0.0.0:10443`). To accept VPN connections over IPv6 as well,
+configure the optional IPv6 listener below.
+
+Run the following commands in a Bash shell on the **Linux VPS host**, from the
+`mavi-vpn-docker` directory. Because this deployment uses
+[host networking](https://docs.docker.com/engine/network/drivers/host/), it needs
+no Docker bridge IPv6 subnet, `daemon.json` IPv6 setting, or port mappings.
+
+### 1. Check public IPv6 connectivity
+
+Enable IPv6 in your VPS provider's network settings first. The current container
+entrypoint selects its WAN interface using the IPv4 route to `8.8.8.8` and uses
+that same interface for NAT66. These instructions assume IPv4 and IPv6 internet
+access use that interface; separate IPv4/IPv6 uplinks need a different server
+network setup.
 
 ```bash
-MAVI_WAN=$(ip -4 route get 1.1.1.1 | awk '{for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}')
+MAVI_WAN=$(ip -4 route get 8.8.8.8 | awk '{for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}')
+printf 'WAN interface: %s\n' "$MAVI_WAN"
+ip -6 addr show dev "${MAVI_WAN:?No IPv4 WAN interface found}" scope global
+ip -6 route show default
+ip -6 route get 2606:4700:4700::1111
+curl -6 --fail --max-time 15 https://www.cloudflare.com/cdn-cgi/trace
+```
+
+Expect a public IPv6 address on the WAN interface, an IPv6 default route, and
+an `ip=` line with the VPS's public IPv6 address in the curl output. The IPv6
+route lookup should name the same WAN interface. If these checks fail, fix the
+host/provider IPv6 configuration before enabling IPv6 in the VPN.
+
+### 2. Enable forwarding on the host
+
+The container cannot reliably write host sysctls, so apply these settings on the
+host. On networks using router advertisements (RAs), set `accept_ra=2` **before**
+enabling forwarding so the WAN continues learning its IPv6 default route.
+The [Linux kernel documentation](https://docs.kernel.org/networking/ip-sysctl.html)
+explains these settings.
+
+Using `MAVI_WAN` from the previous step, persist and apply the settings:
+
+```bash
 sudo tee /etc/sysctl.d/99-mavi-vpn-ipv6.conf >/dev/null <<CONF
-net.ipv6.conf.${MAVI_WAN}.accept_ra = 2
+net.ipv6.conf.${MAVI_WAN:?Run the WAN check first}.accept_ra = 2
 net.ipv6.conf.default.accept_ra = 2
 net.ipv6.conf.all.forwarding = 1
 CONF
 sudo sysctl -p /etc/sysctl.d/99-mavi-vpn-ipv6.conf
+
+sysctl net.ipv6.conf.all.forwarding "net.ipv6.conf.${MAVI_WAN}.accept_ra"
+ip -6 route show default
+curl -6 --fail --max-time 15 https://www.cloudflare.com/cdn-cgi/trace
 ```
 
-Then set `VPN_DISABLE_IPV6=false` in `.env` and run `docker compose up -d`.
-`VPN_NETWORK_V6=fd00::/64` is the internal VPN network; the server uses NAT66.
-Do not set it to the VPS's public IPv6 address.
+Expect `forwarding = 1`, `accept_ra = 2`, and working IPv6 connectivity.
+The sysctl file persists across reboots; also keep the IPv4 forwarding setting
+from [Installation](#installation). If your network manager overrides RA settings,
+configure it to keep accepting RAs while forwarding is enabled.
+
+### 3. Configure IPv6 in `.env`
+
+Open the existing file and update these values without replacing your token or
+other settings:
+
+```bash
+nano .env
+```
+
+```dotenv
+VPN_DISABLE_IPV6=false
+VPN_NETWORK_V6=fd00::/64
+VPN_IPV6_WAIT=30
+VPN_DNS_V6=2606:4700:4700::1111
+```
+
+`VPN_DNS_V6` is optional; the address above is also the server's default.
+`VPN_IPV6_WAIT` is the number of seconds to wait for an IPv6 address on the WAN
+at startup. If none appears, the server logs a warning and continues IPv4-only.
+
+#### Optional: accept VPN connections over IPv6
+
+To listen on IPv6, set the following in `.env`. Brackets are required around an
+IPv6 address when it is followed by a port:
+
+```dotenv
+VPN_BIND_ADDR=[::]:10443
+# Only if you also want the optional HTTP/2 listener:
+# VPN_HTTP2_BIND_ADDR=[::]:10443
+```
+
+`[::]` binds to all local IPv6 addresses. On Linux, the wildcard listener also
+accepts IPv4 connections when `net.ipv6.bindv6only=0` (the kernel default). Check
+the host setting before switching an existing IPv4 deployment:
+
+```bash
+sysctl net.ipv6.bindv6only
+```
+
+If it is `1`, the IPv6 listener will not also accept IPv4. Keep the IPv4 listener
+if you only need IPv6 traffic inside the tunnel, or configure the host's socket
+default for dual-stack use before recreating the container.
+
+Use the VPS's public IPv6 address or a hostname with an `AAAA` record in the
+client. For a combined address-and-port field, use `[2001:db8::1234]:10443`
+(replace this documentation address with your real address). For separate host
+and port fields, enter the IPv6 address and `10443` separately. Keep the existing
+token, certificate pin, and matching transport/CR settings.
+
+### 4. Allow the listener through the firewalls
+
+For connections to the server over IPv6, allow inbound `10443/UDP` in both the
+host firewall and the provider's **IPv6** firewall. Also allow `10443/TCP` if you
+enabled HTTP/2. Use your configured port if it differs. IPv4 firewall rules alone
+do not open IPv6 access. Allow essential ICMPv6, including neighbor discovery,
+router advertisements where used, and Packet Too Big messages.
+
+For a host already using UFW, verify `IPV6=yes` in `/etc/default/ufw`, then add
+the listener rules ([UFW documentation](https://manpages.ubuntu.com/manpages/noble/man8/ufw.8.html)):
+
+```bash
+grep '^IPV6=' /etc/default/ufw
+sudo ufw allow 10443/udp
+# Only when HTTP/2 is enabled:
+# sudo ufw allow 10443/tcp
+sudo ufw status verbose
+```
+
+An active UFW configuration should show the matching `(v6)` rules. If you change
+`IPV6` from `no` to `yes`, reload UFW and check again. Apply firewall changes
+before the next step: the server installs its own NAT66 and forwarding chains
+on startup.
+
+### 5. Apply and verify
+
+```bash
+docker compose config --quiet
+docker compose pull
+docker compose up -d --force-recreate vpn-server
+docker compose logs --tail=150 vpn-server
+
+# Use your VPN_TUN_DEVICE value if you changed the default mavi0.
+ip -6 addr show dev mavi0
+docker compose exec vpn-server ip6tables -t nat -S MAVI_VPN6_NAT
+docker compose exec vpn-server ip6tables -S MAVI_VPN6_FORWARD
+
+# Only when VPN_BIND_ADDR=[::]:10443 is configured:
+sudo ss -6 -lunp 'sport = :10443'
+# Only when the IPv6 HTTP/2 listener is enabled:
+# sudo ss -6 -ltnp 'sport = :10443'
+```
+
+Expect `NAT66 configured: fd00::/64 -> <WAN> (IPv6)` in the logs,
+`fd00::1/64` on `mavi0`, and a `MASQUERADE` rule in `MAVI_VPN6_NAT`.
+The listener check confirms the local socket; reconnect a client to verify
+reachability through the host and provider firewalls.
+
+After reconnecting, run these on the **VPN client** (on Windows, use `curl.exe`):
+
+```bash
+curl -4 --fail --max-time 15 https://www.cloudflare.com/cdn-cgi/trace
+curl -6 --fail --max-time 15 https://www.cloudflare.com/cdn-cgi/trace
+```
+
+With full-tunnel routing, both `ip=` results should be the VPS's public addresses,
+not the client's ISP addresses. This checks IPv6 internet access through the
+tunnel even when the VPN connection itself uses IPv4.
+
+### Troubleshooting and returning to IPv4-only
+
+- **`IPv6 forwarding is not enabled`:** Reapply the host sysctl file from step 2,
+  then recreate the container. Changing `.env` alone cannot enable forwarding.
+- **`no global IPv6 ... continuing IPv4-only`:** Check the WAN address and route
+  from step 1. If address assignment is only slow at boot, increase
+  `VPN_IPV6_WAIT` (for example to `60`) and recreate the container.
+- **Host IPv6 works, but client IPv6 fails:** Check the TUN address, NAT66 and
+  forwarding chains above, reconnect the client, and check its IPv6 routes.
+  After a firewall reload, restart `vpn-server` to reinstall its managed chains.
+- **IPv4 connections fail after changing to `[::]`:** Check `net.ipv6.bindv6only`
+  and the IPv4 firewall rules, or restore `VPN_BIND_ADDR=0.0.0.0:10443`.
+
+To return to IPv4-only operation, set `VPN_DISABLE_IPV6=true` and
+`VPN_BIND_ADDR=0.0.0.0:10443` in `.env`. If HTTP/2 is enabled, also restore
+`VPN_HTTP2_BIND_ADDR=0.0.0.0:10443`. Then apply the change and reconnect clients:
+
+```bash
+docker compose up -d --force-recreate vpn-server
+docker compose logs --tail=100 vpn-server
+```
+
+The server removes its managed IPv6 firewall chains during shutdown and skips
+IPv6 tunnel setup on the next start. The host's own IPv6 connectivity and sysctl
+configuration remain in place.
 
 See the [server installation guide](https://github.com/zerox80/mavi-vpn/blob/main/docs/INSTALLATION.md)
 for more details.
