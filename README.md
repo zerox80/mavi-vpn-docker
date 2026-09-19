@@ -26,11 +26,9 @@ There are no Compose port mappings because the container uses `network_mode: hos
 
 ## Installation
 
-For a new installation with IPv4 **and IPv6**, use
-`cp .env.ipv6.example .env` instead of the copy command below. This template
-already enables the IPv6 tunnel, IPv6 DNS, and the `[::]:10443` listener;
-fill in your token and complete the [host IPv6 setup](#enabling-ipv6) before
-starting. Both templates explain the settings directly in the file.
+Use `.env.example` for both IPv4-only and IPv4 + IPv6 installations.
+It explains all settings, including the IPv6 switches, directly in the file.
+For IPv6, also complete the [host IPv6 setup](#enabling-ipv6) before starting.
 
 ```bash
 git clone https://github.com/zerox80/mavi-vpn-docker.git
@@ -211,22 +209,21 @@ configure it to keep accepting RAs while forwarding is enabled.
 
 ### 3. Configure IPv6 in `.env`
 
-For a **new installation without an existing `.env`**, the complete configuration
-is ready to copy:
+For a **new installation without an existing `.env`**, copy the shared template:
 
 ```bash
-cp .env.ipv6.example .env
+cp .env.example .env
 chmod 600 .env
 openssl rand -hex 32
 nano .env
 ```
 
-Paste the generated token into `VPN_AUTH_TOKEN`. This template already sets
-the IPv6 values below and `VPN_BIND_ADDR=[::]:10443`; follow the listener and
-firewall steps below as well.
+Paste the generated token into `VPN_AUTH_TOKEN`, then set the IPv6 values shown
+below. To also accept connections to the server over IPv6, set
+`VPN_BIND_ADDR=[::]:10443` as described in the listener step.
 
 For an **existing installation**, keep your current `.env` and authentication
-settings. The default `.env.example` also documents all IPv6 options inline.
+settings. The same `.env.example` documents all IPv6 options inline.
 Open the existing file and update these values without replacing your token or
 other settings:
 
