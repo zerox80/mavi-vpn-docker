@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build context: a checkout of zerox80/mavi-vpn, not this deployment repo.
-FROM rust:1.97-slim-trixie AS builder
+FROM rust:1.98-slim-trixie AS builder
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
