@@ -1,5 +1,16 @@
 # Mavi VPN · Docker
 
+> **Deployment moved to the main repository:**
+> [zerox80/mavi — docker/server](https://github.com/zerox80/mavi/tree/main/docker/server).
+> Server images are published by
+> [Publish VPN server image](https://github.com/zerox80/mavi/actions/workflows/publish-server.yml).
+> Android APKs are built by
+> [Build Android APK](https://github.com/zerox80/mavi/actions/workflows/android.yml).
+> This repository's old publisher is retired to avoid competing image updates.
+> Existing installations can keep their `.env`, `data/` and the same
+> `ghcr.io/zerox80/mavi-vpn` image. For a new checkout, use the main repository's
+> deployment instructions. The previous setup guide is retained below.
+
 [![Publish VPN image](https://github.com/zerox80/mavi-vpn-docker/actions/workflows/publish.yml/badge.svg)](https://github.com/zerox80/mavi-vpn-docker/actions/workflows/publish.yml)
 
 A prebuilt [Mavi VPN server](https://github.com/zerox80/mavi-vpn) for Linux VPS hosts.
